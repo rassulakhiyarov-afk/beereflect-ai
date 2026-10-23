@@ -1,63 +1,52 @@
-# BeeReflect AI — AWS & Bee CLI Integration Friction Log
+# BeeReflect AI — AWS Bedrock & Bee CLI Friction Log
 
-> **Developer Feedback for Amazon & Devpost Judges**
-> This log documents real technical friction, service quota bottlenecks, and API schema edge cases encountered while building BeeReflect AI on AWS Bedrock and Bee CLI during the hackathon window.
+This log records onboarding and integration friction encountered while connecting Bee voice input to AWS Bedrock for the hackathon.
 
----
+## AWS Bedrock
 
-## 1. AWS Bedrock Onboarding & Quotas
+### 1. Promotional credits do not provide inference quota
 
-### Entry 1.1: Promotional Credits vs. Default Service Quotas (TPD/TPM)
-* **Task Attempted:** Executing real-time inference via Bedrock `converse()` using a granted $250 promotional credit balance.
-* **Steps Taken:** Activated promo credits in AWS Billing, submitted Anthropic Use Case details, and sent text prompts via `boto3`.
-* **Expected Result:** Immediate API execution funded by the active credit grant.
-* **Actual Result:** `ThrottlingException: Too many tokens per day, please wait before trying again`. New accounts default to 0 Tokens Per Day (TPD) for third-party models despite active credits.
-* **Severity Rating:** **CRITICAL** (Completely blocks live demonstration under tight hackathon deadlines).
-* **Workaround Used:** Implemented an explicit fallback handler in `main.py` catching `botocore.exceptions.ClientError`. Upon encountering `ThrottlingException`, the application gracefully catches the error and serves a structured sample JSON matching Bedrock's exact schema to ensure uninterrupted UI demonstration for judges.
-* **Actionable Suggestion:** Automatically elevate default TPD/TPM Service Quotas for developer accounts whenever an official AWS hackathon credit code is redeemed.
+- **Task Attempted:** Run live analysis with AWS Bedrock using an account with active promotional credits.
+- **Steps Taken:** Applied promotional credits, configured AWS credentials, and invoked the analysis model through the Bedrock Converse API.
+- **Expected vs. Actual Result:** Expected the credit balance to allow inference. Instead, new-account default service quotas can be 0 tokens per day (TPD) or tokens per minute (TPM), and requests return `ThrottlingException` even when credits are available.
+- **Severity Rating:** Critical — blocks live inference and a live demonstration.
+- **Workaround Used:** On a primary-model `ThrottlingException`, the app returns a structured sample analysis payload matching the exact analysis JSON schema expected from Bedrock and validated by Pydantic. This preserves dashboard continuity, but does not provide live model analysis.
+- **Actionable Suggestion:** Surface quota availability and requestable TPD/TPM limits during Bedrock onboarding, and clearly distinguish promotional billing credits from inference capacity.
 
----
+### 2. Legacy model IDs and cross-region inference profiles
 
-### Entry 1.2: Model Version Deprecation & Inference Profile Naming
-* **Task Attempted:** Invoking standard Claude model IDs listed in legacy tutorials and documentation.
-* **Steps Taken:** Passed `modelId="anthropic.claude-3-haiku-20240307-v1:0"` directly to `boto3`.
-* **Expected Result:** Model invocation or automatic routing to the latest active patch version.
-* **Actual Result:** `botocore.errorfactory.ResourceNotFoundException: This model version has reached the end of its life`.
-* **Severity Rating:** **HIGH**
-* **Workaround Used:** Updated model constants in `main.py` to active US Cross-Region Inference Profiles (`us.anthropic.claude-3-5-haiku-20241022-v1:0`, `us.amazon.nova-2-lite-v1:0`).
-* **Actionable Suggestion:** Add auto-redirection in `boto3` for deprecated model IDs to active Cross-Region Inference Profiles with a clear SDK deprecation warning rather than dropping the request.
+- **Task Attempted:** Invoke model IDs copied from older tutorials and examples.
+- **Steps Taken:** Tried model identifiers directly in Bedrock Converse requests while configuring the current model stack.
+- **Expected vs. Actual Result:** Expected a legacy identifier to remain callable or route automatically to a supported version. Deprecated or unavailable model IDs instead fail; supported models may require a US Cross-Region Inference Profile ID in the request.
+- **Severity Rating:** High — prevents model invocation until the identifier and access configuration are corrected.
+- **Workaround Used:** Configure the active US inference profile IDs: Nova 2 Sonic (`us.amazon.nova-2-sonic-v1:0`) for audio transcription, Nova 2 Lite (`us.amazon.nova-2-lite-v1:0`) for analysis, and Nova Lite (`us.amazon.nova-lite-v1:0`) as the analysis fallback.
+- **Actionable Suggestion:** Keep model deprecation notices, supported inference profile IDs, region requirements, and migration guidance together in the Bedrock model catalog and API errors.
 
----
+### 3. Converse API multimodal `ContentBlock` validation
 
-### Entry 1.3: Multi-modal ContentBlock Validation in Converse API
-* **Task Attempted:** Sending audio bytes directly alongside text prompts in a unified Converse API payload.
-* **Steps Taken:** Appended an `audio` block to `messages[0].content` when triggering Claude analysis.
-* **Expected Result:** Multi-modal models accept or gracefully ignore non-supported content blocks.
-* **Actual Result:** `ValidationException: ContentBlock object at messages.0.content.1 must set one of the following keys: text, image...`.
-* **Severity Rating:** **HIGH**
-* **Workaround Used:** Architected a strict two-stage pipeline: audio recordings go exclusively to `us.amazon.nova-2-lite-v1:0` for transcription. The output text string is cleaned before being sent to Claude in a single-element text-only block.
-* **Actionable Suggestion:** Improve Converse API error messages to explicitly name which models support `audio` blocks, or allow automatic backend stripping/routing of unsupported block types.
+- **Task Attempted:** Send voice audio and analysis text through the Bedrock Converse API.
+- **Steps Taken:** Integrated audio and text content blocks and tested requests against the transcription and analysis models.
+- **Expected vs. Actual Result:** Expected content blocks to be interchangeable across models. The API validates each block against the model's supported modalities and returns a `ValidationException` when a request contains an unsupported or malformed block.
+- **Severity Rating:** High — malformed or model-incompatible blocks prevent transcription or analysis.
+- **Workaround Used:** Keep the stages and payloads model-specific: send supported text-plus-audio blocks to Nova 2 Sonic for transcription, then send the resulting transcript as a text block to Nova 2 Lite for analysis. Validate the returned analysis with Pydantic.
+- **Actionable Suggestion:** Include model-specific supported `ContentBlock` types and representative valid payloads in the Converse API documentation and validation errors.
 
----
+### 4. Marketplace and Bedrock UI onboarding
 
-### Entry 1.4: AWS Marketplace & Bedrock UI Onboarding Ambiguity
-* **Task Attempted:** Enabling Bedrock models via AWS Console.
-* **Steps Taken:** Navigated through Bedrock Model Catalog and AWS Marketplace Subscriptions.
-* **Expected Result:** A single toggle button to activate model access.
-* **Actual Result:** Marketplace UI shows misleading "Set up product" buttons for active serverless subscriptions, while the mandatory "Submit Use Case Details" modal is hidden inside the Playground interface.
-* **Severity Rating:** **MODERATE**
-* **Workaround Used:** Manually opened Playground for Claude 3.5 Haiku to force the Use Case modal to appear and submit project details.
-* **Actionable Suggestion:** Unify Marketplace subscription status, Use Case submission, and Service Quota verification into a single guided Onboarding Wizard inside Amazon Bedrock.
+- **Task Attempted:** Enable Bedrock model access and submit required use-case information in the AWS Console.
+- **Steps Taken:** Navigated the Bedrock model catalog, AWS Marketplace subscription views, and the model Playground.
+- **Expected vs. Actual Result:** Expected subscription status and required access steps to be visible together. Marketplace product setup and subscription status did not clearly indicate whether all required Bedrock steps were complete; the use-case submission prompt was surfaced from the Playground.
+- **Severity Rating:** Moderate — delays setup and makes it difficult to identify the missing onboarding step.
+- **Workaround Used:** Opened the relevant model in Playground and followed the use-case submission prompt, then verified access by attempting a Bedrock request.
+- **Actionable Suggestion:** Provide one onboarding checklist that shows Marketplace status, use-case submission, model access, region, and quota readiness.
 
----
+## Bee CLI & Voice Ingestion
 
-## 2. Bee CLI & Wearable Integration Seams
+### 5. Fragmented ambient logs and timestamp resolution
 
-### Entry 2.1: Transcript Ingestion & Export Contracts
-* **Task Attempted:** Interfacing dashboard UI directly with ambient audio streams.
-* **Steps Taken:** Simulated continuous voice note streams from Bee CLI.
-* **Expected Result:** A standardized JSON stdout contract for exported transcripts with precise timestamps.
-* **Actual Result:** Ambient streams produce fragmented, partial text notes requiring custom text sanitization.
-* **Severity Rating:** **MODERATE**
-* **Workaround Used:** Built a flexible text/preset input layer in Streamlit that accepts raw text streams while preserving the original transcript for user verification before extraction.
-* **Actionable Suggestion:** Provide an official Bee CLI adapter package that exposes a standardized `transcript_stream` interface with built-in time-zone and capture-timestamp metadata.
+- **Task Attempted:** Bring ambient voice logs captured through Bee CLI into the Streamlit dashboard for analysis.
+- **Steps Taken:** Compared fragmented voice-log output and timestamps with the dashboard's transcript input and processing flow.
+- **Expected vs. Actual Result:** Expected a single, ordered transcript with consistent capture timestamps. Ambient ingestion can instead produce partial or fragmented text, and timestamps may need resolution across fragments before the text is useful as one reflection.
+- **Severity Rating:** Moderate — fragments can lose context or appear out of order, reducing the quality of analysis.
+- **Workaround Used:** Use the dashboard's text/preset input with a manually reviewed, ordered transcript; retain or clarify timestamps in the text when they are relevant. The current dashboard does not automatically merge fragments or reconcile timestamps.
+- **Actionable Suggestion:** Provide a Bee CLI transcript-stream contract with stable event IDs, fragment ordering, timezone-aware capture timestamps, and explicit finalization of a voice log.
